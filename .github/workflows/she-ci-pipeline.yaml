@@ -1,0 +1,250 @@
+name: 'SHE CI Pipeline'
+
+env:
+  REGISTRY: ghcr.io
+
+on:
+  schedule: 
+    - cron: '0 0 * * *' # Täglicher nächtlicher Lauf (UTC 00:00)
+  workflow_dispatch:      # Manuelles Triggern erlauben
+  pull_request:
+    branches: ["main"]    # PRs gegen main bauen
+  push:
+    branches: ["main"]    # Pushes auf main bauen
+
+permissions:
+  contents: read
+  packages: write          # Für Push zu GHCR erforderlich
+
+jobs:
+  container-build-and-push:          # <— ehemals: build-containers-we-care-about
+    runs-on: ubuntu-latest
+    name: SHE Build
+    strategy:
+      max-parallel: 3                # Bis zu 3 Builds parallel
+      matrix:
+        container: ["os-shell", "postgresql", "postgres-exporter", "redis-cluster", "redis-exporter", "minio", "minio-client", "minio-object-browser"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Find Dockerfiles
+        id: find-dockerfiles
+        run: |
+          cd "${{ github.workspace }}/bitnami/${{ matrix.container }}"
+          
+          # Suche rekursiv nach allen Dockerfiles
+          dockerfiles=$(find . -name "Dockerfile" -type f)
+          
+          if [ -z "$dockerfiles" ]; then
+            echo "No Dockerfiles found for ${{ matrix.container }}"
+            exit 1
+          fi
+          
+          echo "Found Dockerfiles:"
+          echo "$dockerfiles"
+          
+          # Übergabe der Liste an nachfolgende Steps
+          echo "dockerfiles<<EOF" >> $GITHUB_OUTPUT
+          echo "$dockerfiles" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Process Dockerfiles
+        id: process-dockerfiles
+        run: |
+          cd "${{ github.workspace }}/bitnami/${{ matrix.container }}"
+          
+          dockerfiles="${{ steps.find-dockerfiles.outputs.dockerfiles }}"
+          
+          # Erzeuge Build-Metadaten (Pfad, finaler Tag, Basisversion)
+          build_info=""
+          for dockerfile in $dockerfiles; do
+            dockerfile_dir=$(dirname "$dockerfile")
+            echo "Processing Dockerfile: $dockerfile in directory: $dockerfile_dir"
+            
+            cd "${{ github.workspace }}/bitnami/${{ matrix.container }}/$dockerfile_dir"
+            
+            # Version aus Label
+            version=$(grep 'org.opencontainers.image.version=' Dockerfile | sed 's/.*org.opencontainers.image.version="\([^"]*\)".*/\1/')
+            
+            # OS-Flavor vorrangig aus ENV OS_FLAVOUR
+            os_flavour=$(grep '^ENV.*OS_FLAVOUR=' Dockerfile | sed 's/.*OS_FLAVOUR="\([^"]*\)".*/\1/' | head -1)
+            
+            # Revisionsnummer (ENV/Variable)
+            image_revision=$(grep 'IMAGE_REVISION=' Dockerfile | sed 's/.*IMAGE_REVISION="\([^"]*\)".*/\1/' | head -1)
+            
+            if [ -z "$version" ]; then
+              echo "Warning: Could not extract version from Dockerfile, using 'latest'"
+              version="latest"
+            fi
+            
+            echo "Found version: $version"
+            echo "Found OS flavour: $os_flavour"
+            echo "Found image revision: $image_revision"
+            
+            # Tag im Bitnami-Format: version[-os_flavour][-rREV]
+            full_tag="$version"
+            
+            # OS-Flavor hinzufügen
+            if [ -n "$os_flavour" ]; then
+              full_tag="${full_tag}-${os_flavour}"
+            else
+              # Fallback: aus Verzeichnispfad ableiten (z. B. debian-12)
+              distro=$(echo "$dockerfile_dir" | grep -o '[a-z]*-[0-9]*' | head -1 || echo "")
+              if [ -n "$distro" ]; then
+                full_tag="${full_tag}-${distro}"
+                os_flavour="$distro"
+              fi
+            fi
+            
+            # Revision mit Präfix "r"
+            if [ -n "$image_revision" ]; then
+              full_tag="${full_tag}-r${image_revision}"
+              echo "Added revision: r${image_revision}"
+            else
+              echo "Warning: No IMAGE_REVISION found in Dockerfile"
+            fi
+            
+            echo "Final full tag: $full_tag"
+            
+            # Build-Infos sammeln
+            if [ -n "$build_info" ]; then
+              build_info="${build_info}|"
+            fi
+            build_info="${build_info}${dockerfile_dir}:${full_tag}:${version}"
+          done
+          
+          echo "build-info=$build_info" >> $GITHUB_OUTPUT
+          echo "Build info collected: $build_info"
+
+      - name: Check Existing Images
+        id: check-images
+        run: |
+          cd "${{ github.workspace }}/bitnami/${{ matrix.container }}"
+          
+          build_info="${{ steps.process-dockerfiles.outputs.build-info }}"
+          images_to_build=""
+          
+          IFS='|' read -ra BUILDS <<< "$build_info"
+          for build in "${BUILDS[@]}"; do
+            IFS=':' read -ra BUILD_PARTS <<< "$build"
+            dockerfile_dir="${BUILD_PARTS[0]}"
+            full_tag="${BUILD_PARTS[1]}"
+            base_version="${BUILD_PARTS[2]}"
+            
+            registry_tag="${{ env.REGISTRY }}/${{ github.repository_owner }}/bitnami-${{ matrix.container }}:$full_tag"
+            echo "Checking if $registry_tag already exists..."
+            
+            if docker manifest inspect "$registry_tag" > /dev/null 2>&1; then
+              echo "✅ Image $registry_tag already exists in registry, skipping build"
+            else
+              echo "🔨 Image $registry_tag not found, will build"
+              if [ -n "$images_to_build" ]; then
+                images_to_build="${images_to_build}|"
+              fi
+              images_to_build="${images_to_build}${dockerfile_dir}:${full_tag}:${base_version}"
+            fi
+          done
+          
+          echo "images-to-build=$images_to_build" >> $GITHUB_OUTPUT
+          echo "Images to build: $images_to_build"
+
+      - name: Build Container Images
+        if: steps.check-images.outputs.images-to-build != ''
+        run: |
+          cd "${{ github.workspace }}/bitnami/${{ matrix.container }}"
+          
+          images_to_build="${{ steps.check-images.outputs.images-to-build }}"
+          
+          IFS='|' read -ra BUILDS <<< "$images_to_build"
+          for build in "${BUILDS[@]}"; do
+            IFS=':' read -ra BUILD_PARTS <<< "$build"
+            dockerfile_dir="${BUILD_PARTS[0]}"
+            full_tag="${BUILD_PARTS[1]}"
+            base_version="${BUILD_PARTS[2]}"
+            
+            echo "Building image for $dockerfile_dir with full tag $full_tag"
+            cd "${{ github.workspace }}/bitnami/${{ matrix.container }}/$dockerfile_dir"
+            
+            # Build mit temporärem Tag (lässt sich danach mehrfach taggen)
+            temp_tag="temp-bitnami-${{ matrix.container }}-$(basename "$dockerfile_dir")-$(date +%s)"
+            echo "Building with temporary tag: $temp_tag"
+            docker build -t "$temp_tag" .
+            echo "Build completed for $temp_tag"
+            
+            # Finale Tags (lokal & Registry)
+            final_tag_full="bitnami-${{ matrix.container }}:$full_tag"
+            final_tag_base="bitnami-${{ matrix.container }}:$base_version"
+            registry_tag_full="${{ env.REGISTRY }}/${{ github.repository_owner }}/bitnami-${{ matrix.container }}:$full_tag"
+            registry_tag_base="${{ env.REGISTRY }}/${{ github.repository_owner }}/bitnami-${{ matrix.container }}:$base_version"
+            
+            echo "Tagging $temp_tag with multiple tags:"
+            echo "  - $final_tag_full"
+            echo "  - $final_tag_base"
+            echo "  - $registry_tag_full"
+            echo "  - $registry_tag_base"
+            
+            docker tag "$temp_tag" "$final_tag_full"
+            docker tag "$temp_tag" "$final_tag_base"
+            docker tag "$temp_tag" "$registry_tag_full"
+            docker tag "$temp_tag" "$registry_tag_base"
+            docker rmi "$temp_tag"
+            
+            echo "Successfully created all tags for $dockerfile_dir"
+          done
+
+      - name: Push Images to Registry
+        if: steps.check-images.outputs.images-to-build != '' && github.ref == 'refs/heads/main'
+        run: |
+          images_to_build="${{ steps.check-images.outputs.images-to-build }}"
+          
+          echo "On main branch, pushing images to registry"
+          
+          IFS='|' read -ra BUILDS <<< "$images_to_build"
+          for build in "${BUILDS[@]}"; do
+            IFS=':' read -ra BUILD_PARTS <<< "$build"
+            dockerfile_dir="${BUILD_PARTS[0]}"
+            full_tag="${BUILD_PARTS[1]}"
+            base_version="${BUILD_PARTS[2]}"
+            
+            registry_tag_full="${{ env.REGISTRY }}/${{ github.repository_owner }}/bitnami-${{ matrix.container }}:$full_tag"
+            registry_tag_base="${{ env.REGISTRY }}/${{ github.repository_owner }}/bitnami-${{ matrix.container }}:$base_version"
+            
+            echo "Pushing $registry_tag_full to registry"
+            docker push "$registry_tag_full"
+            echo "Successfully pushed $registry_tag_full"
+            
+            echo "Pushing $registry_tag_base to registry"
+            docker push "$registry_tag_base"
+            echo "Successfully pushed $registry_tag_base"
+          done
+
+      - name: Skip Push (Not Main Branch)
+        if: steps.check-images.outputs.images-to-build != '' && github.ref != 'refs/heads/main'
+        run: |
+          echo "Not on main branch (current: ${{ github.ref }}), skipping push to registry"
+          echo "Images built but not pushed:"
+          
+          images_to_build="${{ steps.check-images.outputs.images-to-build }}"
+          
+          IFS='|' read -ra BUILDS <<< "$images_to_build"
+          for build in "${BUILDS[@]}"; do
+            IFS=':' read -ra BUILD_PARTS <<< "$build"
+            dockerfile_dir="${BUILD_PARTS[0]}"
+            full_tag="${BUILD_PARTS[1]}"
+            base_version="${BUILD_PARTS[2]}"
+            
+            registry_tag_full="${{ env.REGISTRY }}/${{ github.repository_owner }}/bitnami-${{ matrix.container }}:$full_tag"
+            registry_tag_base="${{ env.REGISTRY }}/${{ github.repository_owner }}/bitnami-${{ matrix.container }}:$base_version"
+            
+            echo "  - Full tag: $registry_tag_full"
+            echo "  - Base tag: $registry_tag_base"
+            echo ""
