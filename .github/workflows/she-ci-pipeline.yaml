@@ -2,11 +2,7 @@ name: 'SHE CI Pipeline'
 
 env:
   REGISTRY: ghcr.io
-- name: set lower case owner name
-  run: |
-    echo "OWNER_LC=${OWNER,,}" >>${GITHUB_ENV}
-  env:
-    OWNER: '${{ github.repository_owner }}'
+  
 on:
   schedule: 
     - cron: '0 0 * * *' # Täglicher nächtlicher Lauf (UTC 00:00)
