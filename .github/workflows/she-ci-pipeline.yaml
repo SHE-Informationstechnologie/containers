@@ -23,7 +23,7 @@ jobs:
     strategy:
       max-parallel: 3                       # Up to 3 builds in parallel
       matrix:
-        container: ["os-shell", "postgresql", "schema-registry", "keycloak", "minio", "minio-client", "minio-object-browser"]
+        container: ["os-shell", "postgresql", "schema-registry", "keycloak", "minio", "minio-client", "minio-object-browser", "redis", "redis-exporter", "redis-sentinel"]
 
     steps:
       - name: Checkout
