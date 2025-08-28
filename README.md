@@ -10,6 +10,24 @@
     <a href="https://github.com/bitnami/containers/actions/workflows/ci-pipeline.yml"><img src="https://github.com/bitnami/containers/actions/workflows/ci-pipeline.yml/badge.svg" /></a>
 </p>
 
+# About This Repository
+
+This repository maintains container images that were originally provided by Bitnami.
+Since Bitnami announced the discontinuation of their container images, we continue to maintain and publish these images to ensure ongoing availability and compatibility for our projects.
+
+# Why This Fork Exists
+
+Bitnami decided to discontinue their container image offering, meaning that no new versions, patches, or security updates are being provided upstream.
+To avoid disruption and to keep existing workflows functional, this repository:
+
+- Preserves the original image naming and tagging scheme
+
+- Provides regular updates and security patches
+
+- Publishes images to the GitHub Container Registry (GHCR)
+
+- Ensures compatibility for projects that previously depended on Bitnami images
+
 # The Bitnami Containers Library
 
 Popular applications, provided by [Bitnami](https://bitnami.com), containerized and ready to launch.
