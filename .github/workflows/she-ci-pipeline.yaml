@@ -2,7 +2,7 @@ name: 'SHE CI Pipeline'
 
 env:
   REGISTRY: ghcr.io
-  
+
 on:
   schedule: 
     - cron: '0 0 * * *' # Täglicher nächtlicher Lauf (UTC 00:00)
@@ -26,6 +26,12 @@ jobs:
         container: ["os-shell", "postgresql", "postgres-exporter", "redis-cluster", "redis-exporter", "minio", "minio-client", "minio-object-browser"]
 
     steps:
+      - name: set lower case owner name
+        run: |
+          echo "OWNER_LC=${OWNER,,}" >>${GITHUB_ENV}
+        env:
+          OWNER: '${{ github.repository_owner }}'
+          
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -133,8 +139,6 @@ jobs:
           build_info="${{ steps.process-dockerfiles.outputs.build-info }}"
           images_to_build=""
           
-          repo_owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          
           IFS='|' read -ra BUILDS <<< "$build_info"
           for build in "${BUILDS[@]}"; do
             IFS=':' read -ra BUILD_PARTS <<< "$build"
@@ -142,7 +146,7 @@ jobs:
             full_tag="${BUILD_PARTS[1]}"
             base_version="${BUILD_PARTS[2]}"
             
-            registry_tag="${{ env.REGISTRY }}/$repo_owner/bitnami-${{ matrix.container }}:$full_tag"
+            registry_tag="${{ env.REGISTRY }}/${{ github.repository_owner }}/bitnami-${{ matrix.container }}:$full_tag"
             echo "Checking if $registry_tag already exists..."
             
             if docker manifest inspect "$registry_tag" > /dev/null 2>&1; then
@@ -185,9 +189,8 @@ jobs:
             # Finale Tags (lokal & Registry)
             final_tag_full="bitnami-${{ matrix.container }}:$full_tag"
             final_tag_base="bitnami-${{ matrix.container }}:$base_version"
-            registry_tag_full="${{ env.REGISTRY }}/$repo_owner/bitnami-${{ matrix.container }}:$full_tag"
-            registry_tag_base="${{ env.REGISTRY }}/$repo_owner/bitnami-${{ matrix.container }}:$base_version"
-
+            registry_tag_full="${{ env.REGISTRY }}/${{ github.repository_owner }}/bitnami-${{ matrix.container }}:$full_tag"
+            registry_tag_base="${{ env.REGISTRY }}/${{ github.repository_owner }}/bitnami-${{ matrix.container }}:$base_version"
             
             echo "Tagging $temp_tag with multiple tags:"
             echo "  - $final_tag_full"
@@ -218,9 +221,8 @@ jobs:
             full_tag="${BUILD_PARTS[1]}"
             base_version="${BUILD_PARTS[2]}"
             
-            registry_tag_full="${{ env.REGISTRY }}/$repo_owner/bitnami-${{ matrix.container }}:$full_tag"
-            registry_tag_base="${{ env.REGISTRY }}/$repo_owner/bitnami-${{ matrix.container }}:$base_version"
-
+            registry_tag_full="${{ env.REGISTRY }}/${{ github.repository_owner }}/bitnami-${{ matrix.container }}:$full_tag"
+            registry_tag_base="${{ env.REGISTRY }}/${{ github.repository_owner }}/bitnami-${{ matrix.container }}:$base_version"
             
             echo "Pushing $registry_tag_full to registry"
             docker push "$registry_tag_full"
@@ -246,9 +248,8 @@ jobs:
             full_tag="${BUILD_PARTS[1]}"
             base_version="${BUILD_PARTS[2]}"
             
-            registry_tag_full="${{ env.REGISTRY }}/$repo_owner/bitnami-${{ matrix.container }}:$full_tag"
-            registry_tag_base="${{ env.REGISTRY }}/$repo_owner/bitnami-${{ matrix.container }}:$base_version"
-
+            registry_tag_full="${{ env.REGISTRY }}/${{ github.repository_owner }}/bitnami-${{ matrix.container }}:$full_tag"
+            registry_tag_base="${{ env.REGISTRY }}/${{ github.repository_owner }}/bitnami-${{ matrix.container }}:$base_version"
             
             echo "  - Full tag: $registry_tag_full"
             echo "  - Base tag: $registry_tag_base"
