@@ -57,7 +57,7 @@ jobs:
         run: |
           echo "⚙️ Attempting to merge upstream changes into main..."
           
-          if git merge upstream/main --no-edit; then
+          if git merge upstream/main --no-edit -X theirs; then
             echo "merge-success=true" >> $GITHUB_OUTPUT
             echo "✅ Merge completed successfully"
             
