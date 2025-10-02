@@ -51,85 +51,38 @@ jobs:
             echo "🔄 New changes detected, preparing merge..."
           fi
       
-      - name: Attempt merge (prefer upstream/ours & auto-resolve modify/delete)
+      - name: Attempt merge
         if: steps.check-changes.outputs.has-changes == 'true'
         id: merge
         run: |
-          set -e
-          echo "⚙️ Attempting to merge upstream changes into main (prefer ours)..."
-
-          if git merge upstream/main --no-edit -X ours; then
-            echo "✅ Merge completed successfully (with -X ours)"
+          echo "⚙️ Attempting to merge upstream changes into main..."
+          
+          if git merge upstream/main --no-edit; then
+            echo "merge-success=true" >> $GITHUB_OUTPUT
+            echo "✅ Merge completed successfully"
+            
+            MERGE_COMMITS=$(git log --oneline ${{ steps.check-changes.outputs.current-sha }}..${{ steps.check-changes.outputs.upstream-sha }} | wc -l)
+            echo "merge-commits=$MERGE_COMMITS" >> $GITHUB_OUTPUT
+            
+            echo "## Upstream Sync Summary" >> $GITHUB_STEP_SUMMARY
+            echo "- **Status**: ✅ Success" >> $GITHUB_STEP_SUMMARY
+            echo "- **Commits merged**: $MERGE_COMMITS" >> $GITHUB_STEP_SUMMARY
+            echo "- **Upstream SHA**: ${{ steps.check-changes.outputs.upstream-sha }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Previous SHA**: ${{ steps.check-changes.outputs.current-sha }}" >> $GITHUB_STEP_SUMMARY
           else
-            echo "❌ Merge reported conflicts, trying targeted auto-resolution..."
-          fi
-
-          CONFLICTS=$(git diff --name-only --diff-filter=U || true)
-          if [ -n "$CONFLICTS" ]; then
-            echo "$CONFLICTS" | while read -r file; do
-              # Bei allen Konfliktdateien Upstream-Version nehmen
-              git checkout --ours -- "$file" || true
-              git add -- "$file" || true
-            done
-          fi
-
-          if git diff --name-only --diff-filter=U | grep -q .; then
-            echo "❌ Remaining unresolved conflicts:"
-            git diff --name-only --diff-filter=U
             echo "merge-success=false" >> $GITHUB_OUTPUT
-            # optional: Merge abbrechen, wenn du lieber manuell löst
-            git merge --abort || true
+            echo "❌ Merge failed: conflicts detected"
+            
+            git merge --abort
+            
+            echo "## Upstream Sync Summary" >> $GITHUB_STEP_SUMMARY
+            echo "- **Status**: ❌ Failed" >> $GITHUB_STEP_SUMMARY
+            echo "- **Reason**: Merge conflicts detected" >> $GITHUB_STEP_SUMMARY
+            echo "- **Action required**: Manual resolution needed" >> $GITHUB_STEP_SUMMARY
+            echo "- **Upstream SHA**: ${{ steps.check-changes.outputs.upstream-sha }}" >> $GITHUB_STEP_SUMMARY
+            
             exit 1
           fi
-
-          if ! git log -1 --pretty=%B | grep -q "Merge branch 'upstream/main'"; then
-            git commit -m "chore: auto-resolve upstream sync conflicts (prefer ours)"
-          fi
-
-          echo "merge-success=true" >> $GITHUB_OUTPUT
-          MERGE_COMMITS=$(git log --oneline ${{ steps.check-changes.outputs.current-sha }}..${{ steps.check-changes.outputs.upstream-sha }} | wc -l || echo 0)
-          echo "merge-commits=$MERGE_COMMITS" >> $GITHUB_OUTPUT
-          {
-            echo "## Upstream Sync Summary"
-            echo "- **Status**: ✅ Success"
-            echo "- **Commits merged**: $MERGE_COMMITS"
-            echo "- **Upstream SHA**: ${{ steps.check-changes.outputs.upstream-sha }}"
-            echo "- **Previous SHA**: ${{ steps.check-changes.outputs.current-sha }}"
-            echo "- **Strategy**: -X theirs + targeted auto-resolve"
-          } >> $GITHUB_STEP_SUMMARY
-
-      # - name: Attempt merge
-      #   if: steps.check-changes.outputs.has-changes == 'true'
-      #   id: merge
-      #   run: |
-      #     echo "⚙️ Attempting to merge upstream changes into main..."
-          
-      #     if git merge upstream/main --no-edit -X theirs; then
-      #       echo "merge-success=true" >> $GITHUB_OUTPUT
-      #       echo "✅ Merge completed successfully"
-            
-      #       MERGE_COMMITS=$(git log --oneline ${{ steps.check-changes.outputs.current-sha }}..${{ steps.check-changes.outputs.upstream-sha }} | wc -l)
-      #       echo "merge-commits=$MERGE_COMMITS" >> $GITHUB_OUTPUT
-            
-      #       echo "## Upstream Sync Summary" >> $GITHUB_STEP_SUMMARY
-      #       echo "- **Status**: ✅ Success" >> $GITHUB_STEP_SUMMARY
-      #       echo "- **Commits merged**: $MERGE_COMMITS" >> $GITHUB_STEP_SUMMARY
-      #       echo "- **Upstream SHA**: ${{ steps.check-changes.outputs.upstream-sha }}" >> $GITHUB_STEP_SUMMARY
-      #       echo "- **Previous SHA**: ${{ steps.check-changes.outputs.current-sha }}" >> $GITHUB_STEP_SUMMARY
-      #     else
-      #       echo "merge-success=false" >> $GITHUB_OUTPUT
-      #       echo "❌ Merge failed: conflicts detected"
-            
-      #       git merge --abort
-            
-      #       echo "## Upstream Sync Summary" >> $GITHUB_STEP_SUMMARY
-      #       echo "- **Status**: ❌ Failed" >> $GITHUB_STEP_SUMMARY
-      #       echo "- **Reason**: Merge conflicts detected" >> $GITHUB_STEP_SUMMARY
-      #       echo "- **Action required**: Manual resolution needed" >> $GITHUB_STEP_SUMMARY
-      #       echo "- **Upstream SHA**: ${{ steps.check-changes.outputs.upstream-sha }}" >> $GITHUB_STEP_SUMMARY
-            
-      #       exit 1
-      #     fi
       
       - name: Push changes
         if: steps.check-changes.outputs.has-changes == 'true' && steps.merge.outputs.merge-success == 'true'
