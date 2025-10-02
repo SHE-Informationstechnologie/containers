@@ -59,14 +59,12 @@ jobs:
           set -e
           echo "⚙️ Attempting to merge upstream changes into main (prefer ours)..."
 
-          # 1) normaler Merge, inhaltliche Konflikte werden zugunsten upstream gelöst
           if git merge upstream/main --no-edit -X ours; then
             echo "✅ Merge completed successfully (with -X ours)"
           else
             echo "❌ Merge reported conflicts, trying targeted auto-resolution..."
           fi
 
-          # 2) Verbleibende Konflikte (inkl. modify/delete) gezielt mit 'ours' lösen
           CONFLICTS=$(git diff --name-only --diff-filter=U || true)
           if [ -n "$CONFLICTS" ]; then
             echo "$CONFLICTS" | while read -r file; do
@@ -76,7 +74,6 @@ jobs:
             done
           fi
 
-          # 3) Prüfen, ob noch Konflikte offen sind
           if git diff --name-only --diff-filter=U | grep -q .; then
             echo "❌ Remaining unresolved conflicts:"
             git diff --name-only --diff-filter=U
@@ -86,12 +83,10 @@ jobs:
             exit 1
           fi
 
-          # 4) Commit nur, wenn der Merge zuvor abgebrochen/konfliktreich war und wir Dateien hinzugefügt haben
           if ! git log -1 --pretty=%B | grep -q "Merge branch 'upstream/main'"; then
             git commit -m "chore: auto-resolve upstream sync conflicts (prefer ours)"
           fi
 
-          # 5) Outputs/Summary
           echo "merge-success=true" >> $GITHUB_OUTPUT
           MERGE_COMMITS=$(git log --oneline ${{ steps.check-changes.outputs.current-sha }}..${{ steps.check-changes.outputs.upstream-sha }} | wc -l || echo 0)
           echo "merge-commits=$MERGE_COMMITS" >> $GITHUB_OUTPUT
