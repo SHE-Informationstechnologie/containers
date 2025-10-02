@@ -9,7 +9,6 @@ on:
 permissions:
   contents: write         # Needed to push changes
   pull-requests: write    # Needed for issue creation/comments
-  workflows: write        # Needed to update workflow run status
 
 jobs:
   upstream-sync-job:                # <— previously: sync-upstream
